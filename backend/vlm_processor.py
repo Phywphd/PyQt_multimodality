@@ -1,6 +1,7 @@
 """
 VLM处理器 - 基于Qwen2.5-VL官方代码的视觉语言模型处理模块
 参考: https://github.com/QwenLM/Qwen2.5-VL/blob/main/README.md
+参考: /home/hyp/research/multimodal_demo/Qwen2.5-VL/cookbooks/video_understanding.ipynb
 """
 import torch
 import numpy as np
@@ -11,10 +12,11 @@ from PyQt5.QtCore import QObject, QThread, pyqtSignal
 import cv2
 import os
 import tempfile
+from .video_utils import inference_video_with_frames
 
 
 class VLMWorker(QThread):
-    """VLM处理工作线程 - 基于官方推理代码"""
+    """VLM处理工作线程 - 支持图像和视频处理"""
     text_ready = pyqtSignal(str)
     error_occurred = pyqtSignal(str)
     
@@ -23,50 +25,69 @@ class VLMWorker(QThread):
         self.model = model
         self.processor = processor
         self.messages = None
+        self.processing_type = "image"  # "image" 或 "video"
+        self.video_path = None
+        self.prompt = None
         
-    def set_messages(self, messages):
-        """设置要处理的消息"""
+    def set_image_messages(self, messages):
+        """设置图像处理消息"""
         self.messages = messages
+        self.processing_type = "image"
+        
+    def set_video_processing(self, video_path, prompt):
+        """设置视频处理参数"""
+        self.video_path = video_path
+        self.prompt = prompt
+        self.processing_type = "video"
     
     def run(self):
-        """执行VLM推理 - 严格按照官方代码"""
+        """执行VLM推理"""
         try:
-            if not self.messages:
-                self.error_occurred.emit("没有有效的输入消息")
-                return
-            
-            # 按照官方代码处理消息
-            text = self.processor.apply_chat_template(
-                self.messages, 
-                tokenize=False, 
-                add_generation_prompt=True
-            )
-            
-            # 处理视觉信息
-            image_inputs, video_inputs = process_vision_info(self.messages)
-            
-            # 准备输入
-            inputs = self.processor(
-                text=[text],
-                images=image_inputs,
-                videos=video_inputs,
-                padding=True,
-                return_tensors="pt"
-            )
-            inputs = inputs.to(self.model.device)
-            
-            # 生成回复
-            generated_ids = self.model.generate(**inputs, max_new_tokens=512)
-            generated_ids_trimmed = [
-                out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-            ]
-            output_text = self.processor.batch_decode(
-                generated_ids_trimmed, 
-                skip_special_tokens=True, 
-                clean_up_tokenization_spaces=False
-            )
-            
-            self.text_ready.emit(output_text[0])
+            if self.processing_type == "video":
+                # 使用cookbook方法处理视频
+                result = inference_video_with_frames(
+                    self.model, 
+                    self.processor, 
+                    self.video_path, 
+                    self.prompt
+                )
+                self.text_ready.emit(result)
+                
+            elif self.processing_type == "image" and self.messages:
+                # 处理图像 - 按照官方代码
+                text = self.processor.apply_chat_template(
+                    self.messages, 
+                    tokenize=False, 
+                    add_generation_prompt=True
+                )
+                
+                # 处理视觉信息
+                image_inputs, video_inputs = process_vision_info(self.messages)
+                
+                # 准备输入
+                inputs = self.processor(
+                    text=[text],
+                    images=image_inputs,
+                    videos=video_inputs,
+                    padding=True,
+                    return_tensors="pt"
+                )
+                inputs = inputs.to(self.model.device)
+                
+                # 生成回复
+                generated_ids = self.model.generate(**inputs, max_new_tokens=512)
+                generated_ids_trimmed = [
+                    out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+                ]
+                output_text = self.processor.batch_decode(
+                    generated_ids_trimmed, 
+                    skip_special_tokens=True, 
+                    clean_up_tokenization_spaces=False
+                )
+                
+                self.text_ready.emit(output_text[0])
+            else:
+                self.error_occurred.emit("没有有效的输入数据")
             
         except Exception as e:
             self.error_occurred.emit(f"VLM处理错误: {str(e)}")
@@ -131,7 +152,18 @@ class VLMProcessor(QObject):
             }
         ]
         
-        self._run_inference(messages)
+        # 停止之前的处理
+        if self.worker and self.worker.isRunning():
+            self.worker.terminate()
+            self.worker.wait()
+        
+        # 创建新的工作线程，使用图像处理模式
+        self.worker = VLMWorker(self.model, self.processor)
+        self.worker.text_ready.connect(self._on_text_ready)
+        self.worker.error_occurred.connect(self.error_occurred.emit)
+        
+        self.worker.set_image_messages(messages)
+        self.worker.start()
     
     def process_frame(self, frame, prompt="请描述这个画面"):
         """处理OpenCV帧"""
@@ -164,43 +196,25 @@ class VLMProcessor(QObject):
             self.error_occurred.emit(f"帧处理错误: {str(e)}")
     
     def process_video(self, video_path, prompt="请描述这个视频的内容"):
-        """处理视频文件 - 按照官方视频推理格式"""
+        """处理视频文件 - 使用cookbook方法"""
         if not self.is_model_loaded:
             self.error_occurred.emit("模型未加载")
             return
         
-        # 按照官方格式构建视频消息
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "video", 
-                        "video": video_path,
-                        "total_pixels": 20480 * 28 * 28,  # 官方推荐配置
-                        "min_pixels": 16 * 28 * 28
-                    },
-                    {"type": "text", "text": prompt}
-                ]
-            }
-        ]
-        
-        self._run_inference(messages)
-    
-    def _run_inference(self, messages):
-        """运行推理"""
         # 停止之前的处理
         if self.worker and self.worker.isRunning():
             self.worker.terminate()
             self.worker.wait()
         
-        # 创建新的工作线程
+        # 创建新的工作线程，使用视频处理模式
         self.worker = VLMWorker(self.model, self.processor)
         self.worker.text_ready.connect(self._on_text_ready)
         self.worker.error_occurred.connect(self.error_occurred.emit)
         
-        self.worker.set_messages(messages)
+        # 设置视频处理参数并启动
+        self.worker.set_video_processing(video_path, prompt)
         self.worker.start()
+    
     
     def _on_text_ready(self, text):
         """处理完成回调"""
