@@ -1,0 +1,27 @@
+{
+  "recordings": [
+    {
+      "filename": "recording_20250618_150018.mp4",
+      "timestamp": "2025-06-18T15:00:18.628470",
+      "duration": 5.139512062072754,
+      "resolution": "1280x720",
+      "fps": 30.0
+    },
+    {
+      "filename": "recording_20250618_170423.mp4",
+      "timestamp": "2025-06-18T17:04:23.629714",
+      "duration": 7.820872068405151,
+      "resolution": "1280x720",
+      "fps": 30.0
+    },
+    {
+      "filename": "recording_20250620_230853.mp4",
+      "timestamp": "2025-06-20T23:08:53.562983",
+      "duration": 4.397381067276001,
+      "resolution": "1280x720",
+      "fps": 30.0
+    }
+  ],
+  "total_count": 3,
+  "total_duration": 17.357765197753906
+}

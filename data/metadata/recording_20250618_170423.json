@@ -1,0 +1,18 @@
+{
+  "filename": "./data/videos/recording_20250618_170423.mp4",
+  "start_time": "2025-06-18T17:04:23.629714",
+  "duration": 7.820872068405151,
+  "end_time": "2025-06-18T17:04:31.450384",
+  "camera_info": {
+    "type": "local_camera",
+    "camera_id": 0,
+    "resolution": "1280x720",
+    "fps": 30,
+    "backend": 42
+  },
+  "recording_params": {
+    "fps": 30.0,
+    "codec": "mp4v",
+    "format": "mp4"
+  }
+}
