@@ -23,16 +23,56 @@ class TTSWorker(QThread):
     def init_engine(self):
         """初始化TTS引擎"""
         try:
-            self.tts_engine = pyttsx3.init()
+            # 尝试不同的TTS引擎初始化方式
+            driver_options = [None, 'espeak', 'espeak-ng']
+            
+            for driver in driver_options:
+                try:
+                    if driver:
+                        self.tts_engine = pyttsx3.init(driver)
+                        print(f"使用TTS引擎: {driver}")
+                    else:
+                        self.tts_engine = pyttsx3.init()
+                        print("使用默认TTS引擎")
+                    break
+                except Exception as e:
+                    print(f"TTS引擎 {driver or 'default'} 初始化失败: {e}")
+                    continue
+            
+            if not self.tts_engine:
+                raise Exception("无法初始化任何TTS引擎")
             
             # 设置语音属性
             self.tts_engine.setProperty('rate', self.voice_rate)
             self.tts_engine.setProperty('volume', self.voice_volume)
             
-            # 获取可用语音
+            # 获取可用语音，优先选择中文语音
             voices = self.tts_engine.getProperty('voices')
-            if voices and len(voices) > self.voice_id:
-                self.tts_engine.setProperty('voice', voices[self.voice_id].id)
+            selected_voice = None
+            
+            if voices:
+                print(f"找到 {len(voices)} 个可用语音")
+                # 查找中文语音
+                for voice in voices:
+                    voice_name = voice.name.lower() if hasattr(voice, 'name') else ''
+                    voice_id = voice.id.lower() if hasattr(voice, 'id') else ''
+                    
+                    # 优先选择中文相关的语音
+                    if any(keyword in voice_name or keyword in voice_id 
+                           for keyword in ['zh', 'chinese', 'mandarin', 'cn']):
+                        selected_voice = voice.id
+                        print(f"选择中文语音: {voice.name}")
+                        break
+                
+                # 如果没找到中文语音，使用默认语音
+                if not selected_voice and len(voices) > self.voice_id:
+                    selected_voice = voices[self.voice_id].id
+                    print(f"使用默认语音: {voices[self.voice_id].name}")
+                
+                if selected_voice:
+                    self.tts_engine.setProperty('voice', selected_voice)
+            else:
+                print("没有找到可用的语音")
                 
         except Exception as e:
             self.error_occurred.emit(f"TTS引擎初始化失败: {str(e)}")
@@ -90,8 +130,12 @@ class TTSProcessor(QObject):
         if not text or not text.strip():
             return
             
-        # 停止当前朗读
-        self.stop_speaking()
+        # 如果正在朗读，先停止
+        if self.worker and self.worker.isRunning():
+            self.worker.terminate()
+            self.worker.wait()
+        
+        print(f"准备朗读文本: {text[:50]}...")
         
         # 创建新的工作线程
         self.worker = TTSWorker()
@@ -109,13 +153,9 @@ class TTSProcessor(QObject):
         # 设置文本并开始朗读
         self.worker.set_text(text)
         self.worker.start()
+        
+        print("TTS工作线程已启动")
     
-    def stop_speaking(self):
-        """停止朗读"""
-        if self.worker and self.worker.isRunning():
-            self.worker.terminate()
-            self.worker.wait()
-            self.is_speaking = False
     
     def set_voice_rate(self, rate):
         """设置语音速度"""

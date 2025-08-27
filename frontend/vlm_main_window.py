@@ -297,17 +297,11 @@ class VLMMainWindow(QMainWindow):
         layout = QVBoxLayout()
         
         # 语音控制按钮
-        tts_button_layout = QHBoxLayout()
         self.btn_speak_output = QPushButton("朗读分析结果")
         self.btn_speak_output.setEnabled(False)
         self.btn_speak_output.setStyleSheet(self.get_button_style("#FF5722"))
         
-        self.btn_stop_speaking = QPushButton("停止朗读")
-        self.btn_stop_speaking.setEnabled(False)
-        
-        tts_button_layout.addWidget(self.btn_speak_output)
-        tts_button_layout.addWidget(self.btn_stop_speaking)
-        layout.addLayout(tts_button_layout)
+        layout.addWidget(self.btn_speak_output)
         
         # 语音设置
         self.lbl_tts_status = QLabel("语音状态: 就绪")
@@ -375,7 +369,6 @@ class VLMMainWindow(QMainWindow):
         
         # 语音控制
         self.btn_speak_output.clicked.connect(self.on_speak_output)
-        self.btn_stop_speaking.clicked.connect(self.on_stop_speaking)
         
         # 输入控制器信号
         self.input_controller.frame_ready.connect(self.camera_widget.update_frame)
@@ -383,6 +376,7 @@ class VLMMainWindow(QMainWindow):
         self.input_controller.recording_time_updated.connect(self.on_recording_time_updated)
         self.input_controller.input_info_updated.connect(self.on_input_info_updated)
         self.input_controller.input_type_changed.connect(self.on_input_type_changed)
+        self.input_controller.input_closed.connect(self.on_input_closed)
         
         # VLM处理器信号
         self.vlm_processor.text_generated.connect(self.on_vlm_text_generated)
@@ -409,7 +403,7 @@ class VLMMainWindow(QMainWindow):
             self.btn_open_camera.setText("打开摄像头")
             self.btn_start_record.setEnabled(False)
             self.btn_process_current.setEnabled(False)
-            self.camera_widget.clear_display()
+            # clear_display由input_closed信号自动调用
         else:
             # 打开摄像头
             if self.input_controller.open_camera():
@@ -427,7 +421,7 @@ class VLMMainWindow(QMainWindow):
             self.input_controller.close_input()
             self.btn_open_video.setText("打开视频文件")
             self.current_video_path = None
-            self.camera_widget.clear_display()
+            # clear_display由input_closed信号自动调用
         else:
             # 选择视频文件
             file_path, _ = QFileDialog.getOpenFileName(
@@ -565,9 +559,6 @@ class VLMMainWindow(QMainWindow):
         else:
             QMessageBox.information(self, "提示", "没有可朗读的内容")
     
-    def on_stop_speaking(self):
-        """停止朗读"""
-        self.tts_processor.stop_speaking()
     
     # 信号处理方法
     def on_input_status_changed(self, status):
@@ -598,7 +589,8 @@ class VLMMainWindow(QMainWindow):
             self.btn_play_pause.setEnabled(True)
             self.btn_video_reset.setEnabled(True)
             self.video_progress_slider.setEnabled(True)
-            self.lbl_play_status.setText("播放状态: 正在播放")  # 视频打开时默认播放
+            self.lbl_play_status.setText("播放状态: 已暂停")  # 视频打开时默认暂停
+            self.btn_play_pause.setText("播放")  # 按钮显示为播放
             if self.vlm_processor.is_model_loaded:
                 self.btn_process_video.setEnabled(True)
         else:
@@ -608,6 +600,14 @@ class VLMMainWindow(QMainWindow):
         # 根据输入类型和VLM状态启用按钮
         if self.vlm_processor.is_model_loaded and input_type in ["camera", "video"]:
             self.btn_process_current.setEnabled(True)
+    
+    def on_input_closed(self):
+        """输入源关闭时清空显示"""
+        self.camera_widget.clear_display()  # 清空显示，恢复黑屏
+        # 禁用相关按钮
+        self.btn_process_current.setEnabled(False)
+        self.btn_process_video.setEnabled(False)
+        self.video_control_widget.hide()
     
     def on_vlm_text_generated(self, text):
         """VLM文本生成完成"""
@@ -621,17 +621,12 @@ class VLMMainWindow(QMainWindow):
                 self.btn_process_video.setEnabled(True)
         
         # 显示结果
-        timestamp = f"[{datetime.now().strftime('%H:%M:%S')}] "
-        
         self.output_text.moveCursor(QTextCursor.End)
-        self.output_text.insertPlainText(f"\n{timestamp}VLM分析结果:\n{text}\n{'-'*50}\n")
-        self.output_text.moveCursor(QTextCursor.End)
+        self.output_text.insertPlainText(f"\n{text}\n")
         
         # 启用朗读按钮
         self.btn_speak_output.setEnabled(True)
         
-        # 添加到历史记录
-        self.add_to_history(f"VLM处理完成 - {timestamp}")
     
     def on_vlm_error(self, error_msg):
         """VLM处理错误"""
@@ -664,19 +659,16 @@ class VLMMainWindow(QMainWindow):
     def on_speech_started(self):
         """开始朗读"""
         self.btn_speak_output.setEnabled(False)
-        self.btn_stop_speaking.setEnabled(True)
         self.lbl_tts_status.setText("语音状态: 正在朗读...")
     
     def on_speech_finished(self):
         """朗读完成"""
         self.btn_speak_output.setEnabled(True)
-        self.btn_stop_speaking.setEnabled(False)
         self.lbl_tts_status.setText("语音状态: 就绪")
     
     def on_tts_error(self, error_msg):
         """TTS错误"""
         self.btn_speak_output.setEnabled(True)
-        self.btn_stop_speaking.setEnabled(False)
         self.lbl_tts_status.setText("语音状态: 错误")
         QMessageBox.warning(self, "语音输出错误", error_msg)
     

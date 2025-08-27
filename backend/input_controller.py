@@ -125,6 +125,7 @@ class InputController(QObject):
     recording_time_updated = pyqtSignal(str)
     input_info_updated = pyqtSignal(dict)
     input_type_changed = pyqtSignal(str)  # "camera" 或 "video"
+    input_closed = pyqtSignal()  # 输入源关闭信号
     
     def __init__(self):
         super().__init__()
@@ -192,9 +193,19 @@ class InputController(QObject):
             self.worker.input_info_updated.connect(self.input_info_updated.emit)
             self.worker.start()
             
+            # 视频文件默认暂停
+            self.worker.toggle_pause()  # 设置为暂停状态
+            
+            # 显示第一帧
+            frame = self.input_interface.read_frame()
+            if frame is not None:
+                self.frame_ready.emit(frame)
+                # 重置到第一帧
+                self.input_interface.seek_to_frame(0)
+            
             self.is_opened = True
             self.input_type = "video"
-            self.status_changed.emit(f"视频文件已加载: {os.path.basename(video_path)}")
+            self.status_changed.emit(f"视频文件已加载（已暂停）: {os.path.basename(video_path)}")
             self.input_type_changed.emit("video")
             return True
             
@@ -216,6 +227,7 @@ class InputController(QObject):
         self.is_opened = False
         self.input_type = None
         self.status_changed.emit("未连接")
+        self.input_closed.emit()  # 发送关闭信号
         
     def is_input_opened(self):
         """检查输入源是否已打开"""
