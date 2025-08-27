@@ -1,0 +1,27 @@
+name: vlm_server
+channels:
+  - pytorch
+  - nvidia
+  - huggingface
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - pytorch>=2.0.0
+  - torchvision
+  - torchaudio
+  - pytorch-cuda=12.1  # 或者适合你服务器GPU的CUDA版本
+  - pip
+  - pip:
+    - transformers>=4.37.0
+    - accelerate
+    - qwen-vl-utils
+    - flash-attn  # 如果服务器支持
+    - websockets
+    - pillow
+    - numpy
+    - decord
+    - av
+    - opencv-python-headless
+    - tqdm
+    - requests

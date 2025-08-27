@@ -1,6 +1,7 @@
 """
 VLM多模态主窗口界面 - 集成摄像头、视频文件、VLM处理和语音输出
 """
+# -*- coding: utf-8 -*-
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QLabel, QGroupBox, QTextEdit, 
                              QMessageBox, QFileDialog, QSlider, QComboBox,
@@ -9,9 +10,11 @@ from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtGui import QFont, QPixmap, QImage, QTextCursor
 
 from .camera_widget import CameraWidget
+from .chinese_input_widget import ChineseInputLineEdit
 from backend.input_controller import InputController
 from backend.data_manager import DataManager
 from backend.vlm_processor import VLMProcessor
+from backend.vlm_remote_processor import VLMRemoteProcessor
 from backend.tts_processor import TTSProcessor
 from datetime import datetime
 import os
@@ -26,7 +29,9 @@ class VLMMainWindow(QMainWindow):
         # 初始化各个处理器
         self.input_controller = InputController()
         self.data_manager = DataManager()
-        self.vlm_processor = VLMProcessor()
+        # VLM处理器 - 支持本地和远程模式
+        self.use_remote_vlm = True  # 默认使用远程模式
+        self.vlm_processor = VLMRemoteProcessor("10.180.235.247", 8888) if self.use_remote_vlm else VLMProcessor()
         self.tts_processor = TTSProcessor()
         
         # 状态变量
@@ -34,14 +39,31 @@ class VLMMainWindow(QMainWindow):
         self.current_video_path = None
         
         self.init_ui()
+        self.setup_chinese_input()  # 设置中文输入支持
         self.connect_signals()
         
         # 启动模型加载
         QTimer.singleShot(1000, self.load_vlm_model)
-        
+    
+    def setup_chinese_input(self):
+        """设置中文输入支持"""
+        try:
+            from PyQt5.QtCore import Qt
+            # 在窗口级别设置输入法支持
+            self.setAttribute(Qt.WA_InputMethodEnabled, True)
+            
+            # 确保窗口能接收输入法事件
+            self.setInputMethodHints(Qt.ImhNone)
+            
+            # 设置窗口属性支持IME
+            self.setAttribute(Qt.WA_KeyCompression, False)
+            
+        except Exception as e:
+            print(f"设置中文输入支持时出错: {e}")
+    
     def init_ui(self):
         """初始化UI界面"""
-        self.setWindowTitle("VLM多模态演示系统 - 摄像头/视频 + VLM + 语音输出")
+        self.setWindowTitle("VLM多模态演示系统")
         self.setGeometry(100, 100, 1400, 900)
         
         # 创建中心widget
@@ -144,14 +166,29 @@ class VLMMainWindow(QMainWindow):
         
         self.video_progress_slider = QSlider(Qt.Horizontal)
         self.video_progress_slider.setEnabled(False)
+        self.video_progress_slider.setMinimum(0)
+        self.video_progress_slider.setMaximum(100)
         video_control_layout.addWidget(QLabel("视频进度:"))
         video_control_layout.addWidget(self.video_progress_slider)
         
+        # 播放控制按钮
         video_button_layout = QHBoxLayout()
+        self.btn_play_pause = QPushButton("播放/暂停")
+        self.btn_play_pause.setEnabled(False)
+        self.btn_play_pause.setStyleSheet(self.get_button_style("#4CAF50"))
+        
         self.btn_video_reset = QPushButton("重置")
         self.btn_video_reset.setEnabled(False)
+        self.btn_video_reset.setStyleSheet(self.get_button_style("#FF9800"))
+        
+        video_button_layout.addWidget(self.btn_play_pause)
         video_button_layout.addWidget(self.btn_video_reset)
         video_control_layout.addLayout(video_button_layout)
+        
+        # 播放状态显示
+        self.lbl_play_status = QLabel("播放状态: 已暂停")
+        self.lbl_play_status.setFont(QFont("Arial", 9))
+        video_control_layout.addWidget(self.lbl_play_status)
         
         layout.addWidget(self.video_control_widget)
         self.video_control_widget.hide()  # 默认隐藏
@@ -164,11 +201,12 @@ class VLMMainWindow(QMainWindow):
         group = QGroupBox("VLM处理控制")
         layout = QVBoxLayout()
         
-        # 提示词输入
+        # 提示词输入 - 使用专门的中文输入组件
         layout.addWidget(QLabel("提示词:"))
-        self.prompt_input = QTextEdit()
-        self.prompt_input.setMaximumHeight(80)
-        self.prompt_input.setPlainText("请详细描述这个画面中的内容")
+        self.prompt_input = ChineseInputLineEdit()
+        self.prompt_input.setMinimumHeight(40)
+        self.prompt_input.setPlaceholderText("请输入您的问题或指令...")
+        
         layout.addWidget(self.prompt_input)
         
         # 处理按钮
@@ -321,7 +359,11 @@ class VLMMainWindow(QMainWindow):
         self.btn_open_video.clicked.connect(self.on_open_video_file)
         self.btn_start_record.clicked.connect(self.on_start_record)
         self.btn_stop_record.clicked.connect(self.on_stop_record)
+        self.btn_play_pause.clicked.connect(self.on_play_pause)
         self.btn_video_reset.clicked.connect(self.on_video_reset)
+        self.video_progress_slider.valueChanged.connect(self.on_video_progress_changed)
+        self.video_progress_slider.sliderPressed.connect(self.on_slider_pressed)
+        self.video_progress_slider.sliderReleased.connect(self.on_slider_released)
         
         # VLM处理
         self.btn_process_current.clicked.connect(self.on_process_current_frame)
@@ -424,10 +466,49 @@ class VLMMainWindow(QMainWindow):
             self.data_manager.save_metadata(metadata)
             self.update_history()
     
+    def on_play_pause(self):
+        """播放/暂停视频"""
+        is_playing = self.input_controller.toggle_play_pause()
+        if is_playing:
+            self.lbl_play_status.setText("播放状态: 正在播放")
+        else:
+            self.lbl_play_status.setText("播放状态: 已暂停")
+    
     def on_video_reset(self):
         """重置视频"""
         if self.input_controller.reset_video():
             self.video_progress_slider.setValue(0)
+            self.lbl_play_status.setText("播放状态: 已暂停")
+    
+    def on_video_progress_changed(self, value):
+        """视频进度条改变"""
+        if hasattr(self, '_slider_being_dragged') and self._slider_being_dragged:
+            return  # 如果正在拖拽，不处理
+            
+        # 将进度条的值转换为视频时间（假设视频总时长已知）
+        if hasattr(self.input_controller, 'seek_to_progress'):
+            progress = value / 100.0  # 转换为0-1的比例
+            self.input_controller.seek_to_progress(progress)
+    
+    def on_slider_pressed(self):
+        """进度条开始拖拽"""
+        self._slider_being_dragged = True
+        # 暂停视频以便精确定位
+        if hasattr(self.input_controller, 'pause_playback'):
+            self.input_controller.pause_playback()
+    
+    def on_slider_released(self):
+        """进度条拖拽结束"""
+        self._slider_being_dragged = False
+        # 跳转到指定位置
+        value = self.video_progress_slider.value()
+        progress = value / 100.0
+        if hasattr(self.input_controller, 'seek_to_progress'):
+            self.input_controller.seek_to_progress(progress)
+        # 恢复播放
+        if hasattr(self.input_controller, 'resume_playback'):
+            self.input_controller.resume_playback()
+            self.lbl_play_status.setText("播放状态: 正在播放")
     
     def on_process_current_frame(self):
         """处理当前帧"""
@@ -437,7 +518,7 @@ class VLMMainWindow(QMainWindow):
             
         frame = self.input_controller.get_current_frame()
         if frame is not None:
-            prompt = self.prompt_input.toPlainText().strip()
+            prompt = self.prompt_input.text().strip()
             if not prompt:
                 prompt = "请描述这个画面的内容"
                 
@@ -457,7 +538,7 @@ class VLMMainWindow(QMainWindow):
             QMessageBox.information(self, "提示", "VLM正在处理中，请稍候...")
             return
             
-        prompt = self.prompt_input.toPlainText().strip()
+        prompt = self.prompt_input.text().strip()
         if not prompt:
             prompt = "请详细描述这个视频的内容和主要场景"
             
@@ -514,8 +595,10 @@ class VLMMainWindow(QMainWindow):
         """输入类型改变"""
         if input_type == "video":
             self.video_control_widget.show()
+            self.btn_play_pause.setEnabled(True)
             self.btn_video_reset.setEnabled(True)
             self.video_progress_slider.setEnabled(True)
+            self.lbl_play_status.setText("播放状态: 正在播放")  # 视频打开时默认播放
             if self.vlm_processor.is_model_loaded:
                 self.btn_process_video.setEnabled(True)
         else:
@@ -611,6 +694,14 @@ class VLMMainWindow(QMainWindow):
             history_text += f"时长: {record['duration']}秒\n\n"
         self.history_text.setText(history_text)
         
+    def inputMethodEvent(self, event):
+        """处理输入法事件"""
+        # 让输入法事件传递给焦点组件
+        if self.prompt_input.hasFocus():
+            self.prompt_input.inputMethodEvent(event)
+        else:
+            super().inputMethodEvent(event)
+    
     def closeEvent(self, event):
         """窗口关闭事件"""
         if self.input_controller.is_recording():

@@ -127,6 +127,7 @@ def inference_video_with_frames(model, processor, video_path, prompt,
     ]
     
     # Step 3: 处理消息 - 按照cookbook
+    from qwen_vl_utils import process_vision_info
     text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     image_inputs, video_inputs, video_kwargs = process_vision_info([messages], return_video_kwargs=True)
     fps_inputs = video_kwargs['fps']

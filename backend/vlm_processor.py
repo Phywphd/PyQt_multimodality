@@ -3,16 +3,48 @@ VLM处理器 - 基于Qwen2.5-VL官方代码的视觉语言模型处理模块
 参考: https://github.com/QwenLM/Qwen2.5-VL/blob/main/README.md
 参考: /home/hyp/research/multimodal_demo/Qwen2.5-VL/cookbooks/video_understanding.ipynb
 """
-import torch
-import numpy as np
-from PIL import Image
-from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
-from qwen_vl_utils import process_vision_info
-from PyQt5.QtCore import QObject, QThread, pyqtSignal
-import cv2
 import os
 import tempfile
-from .video_utils import inference_video_with_frames
+from PyQt5.QtCore import QObject, QThread, pyqtSignal
+import cv2
+import numpy as np
+from PIL import Image
+
+# 延迟导入以避免与PyQt5冲突
+torch = None
+Qwen2_5_VLForConditionalGeneration = None
+AutoProcessor = None
+process_vision_info = None
+inference_video_with_frames = None
+
+def _lazy_import():
+    """延迟导入重量级模块"""
+    global torch, Qwen2_5_VLForConditionalGeneration, AutoProcessor, process_vision_info, inference_video_with_frames
+    if torch is None:
+        import torch as _torch
+        torch = _torch
+    if Qwen2_5_VLForConditionalGeneration is None:
+        from transformers import Qwen2_5_VLForConditionalGeneration as _Qwen2_5_VL
+        Qwen2_5_VLForConditionalGeneration = _Qwen2_5_VL
+    if AutoProcessor is None:
+        from transformers import AutoProcessor as _AutoProcessor
+        AutoProcessor = _AutoProcessor
+    if process_vision_info is None:
+        from qwen_vl_utils import process_vision_info as _process_vision_info
+        process_vision_info = _process_vision_info
+    if inference_video_with_frames is None:
+        try:
+            from .video_utils import inference_video_with_frames as _inference
+            inference_video_with_frames = _inference
+        except ImportError:
+            try:
+                import sys
+                sys.path.append(os.path.dirname(__file__))
+                from video_utils import inference_video_with_frames as _inference
+                inference_video_with_frames = _inference
+            except ImportError as e:
+                print(f"无法导入video_utils: {e}")
+                inference_video_with_frames = None
 
 
 class VLMWorker(QThread):
@@ -43,6 +75,9 @@ class VLMWorker(QThread):
     def run(self):
         """执行VLM推理"""
         try:
+            # 确保所有模块都已导入
+            _lazy_import()
+            
             if self.processing_type == "video":
                 # 使用cookbook方法处理视频
                 result = inference_video_with_frames(
@@ -61,7 +96,7 @@ class VLMWorker(QThread):
                     add_generation_prompt=True
                 )
                 
-                # 处理视觉信息
+                # 处理视觉信息 - 按照cookbook格式
                 image_inputs, video_inputs = process_vision_info(self.messages)
                 
                 # 准备输入
@@ -110,26 +145,68 @@ class VLMProcessor(QObject):
         self.is_model_loaded = False
         
     def load_model(self):
-        """加载VLM模型 - 按照官方推荐配置"""
+        """加载VLM模型 - 按照cookbook配置"""
         try:
-            self.loading_progress.emit("正在加载模型...")
+            # 延迟导入
+            _lazy_import()
             
-            # 按照官方代码加载模型
+            self.loading_progress.emit("正在检测设备...")
+            
+            # 检查设备和数据类型
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            print(f"检测到设备: {device}")
+            
+            if device == "cuda":
+                print(f"GPU: {torch.cuda.get_device_name(0)}")
+                
+            self.loading_progress.emit(f"正在加载模型到 {device}...")
+            
+            # 清理GPU内存
+            if device == "cuda":
+                torch.cuda.empty_cache()
+                import gc
+                gc.collect()
+                
+            # 使用更激进的内存优化配置
+            if device == "cuda":
+                load_kwargs = {
+                    "torch_dtype": torch.float16,  # 使用float16更省内存
+                    "device_map": "auto",  # 让transformers自动处理设备分配
+                    "low_cpu_mem_usage": True,
+                    "trust_remote_code": True,
+                }
+                print("使用float16精度和自动设备分配以节省内存")
+            else:
+                load_kwargs = {
+                    "torch_dtype": torch.float32,
+                    "device_map": "cpu",
+                }
+            
+            print(f"模型加载配置: {load_kwargs}")
+            
+            # 加载模型
             self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
                 self.model_path,
-                torch_dtype="auto",  # 官方推荐使用auto
-                device_map="auto"
+                **load_kwargs
             )
             
+            # CPU模式需要手动移动到设备
+            if device == "cpu":
+                self.model = self.model.to(device)
+                
             self.loading_progress.emit("正在加载处理器...")
             self.processor = AutoProcessor.from_pretrained(self.model_path)
             
             self.is_model_loaded = True
             self.model_loaded.emit()
             self.loading_progress.emit("模型加载完成")
+            print("VLM模型加载成功！")
             
         except Exception as e:
             error_msg = f"模型加载失败: {str(e)}"
+            print(error_msg)
+            import traceback
+            traceback.print_exc()
             self.error_occurred.emit(error_msg)
     
     def process_image(self, image_path, prompt="请描述这张图片"):

@@ -109,6 +109,13 @@ class VideoFileInterface(BaseCameraInterface):
             return self.current_frame / self.total_frames
         return 0
     
+    def seek_to_progress(self, progress):
+        """跳转到指定进度 (0.0-1.0)"""
+        if self.capture and 0 <= progress <= 1:
+            target_frame = int(progress * self.total_frames)
+            return self.seek_to_frame(target_frame)
+        return False
+    
     def get_camera_info(self):
         """获取视频文件信息"""
         return {

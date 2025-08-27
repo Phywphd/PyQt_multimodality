@@ -25,6 +25,7 @@ class InputWorker(QThread):
         self.video_writer = None
         self.recording_start_time = None
         self.frame_delay = 30  # 默认延迟30ms
+        self.is_paused = False  # 暂停状态
         
     def set_frame_rate(self, fps):
         """设置帧率"""
@@ -35,6 +36,11 @@ class InputWorker(QThread):
         """线程主函数"""
         self.is_running = True
         while self.is_running:
+            # 如果暂停，等待恢复
+            if self.is_paused:
+                self.msleep(100)  # 暂停时休眠100ms
+                continue
+                
             frame = self.input_interface.read_frame()
             if frame is not None:
                 # 发送帧信号
@@ -95,6 +101,19 @@ class InputWorker(QThread):
         if self.is_recording:
             self.stop_recording()
         self.wait()
+    
+    def pause(self):
+        """暂停播放"""
+        self.is_paused = True
+    
+    def resume(self):
+        """恢复播放"""
+        self.is_paused = False
+    
+    def toggle_pause(self):
+        """切换暂停/播放状态"""
+        self.is_paused = not self.is_paused
+        return not self.is_paused  # 返回是否正在播放
 
 
 class InputController(QObject):
@@ -287,6 +306,28 @@ class InputController(QObject):
         if self.input_type == "video" and hasattr(self.input_interface, 'reset_to_beginning'):
             self.input_interface.reset_to_beginning()
             return True
+        return False
+    
+    def toggle_play_pause(self):
+        """切换播放/暂停状态"""
+        if self.worker:
+            return self.worker.toggle_pause()
+        return False
+    
+    def pause_playback(self):
+        """暂停播放"""
+        if self.worker:
+            self.worker.pause()
+    
+    def resume_playback(self):
+        """恢复播放"""
+        if self.worker:
+            self.worker.resume()
+    
+    def seek_to_progress(self, progress):
+        """跳转到指定进度 (0.0-1.0)"""
+        if self.input_type == "video" and hasattr(self.input_interface, 'seek_to_progress'):
+            return self.input_interface.seek_to_progress(progress)
         return False
     
     def get_video_progress(self):
